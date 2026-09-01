@@ -46,6 +46,8 @@ El puente consulta la instancia GREEN-API ya autorizada con el WhatsApp personal
 7. Si la prueba y la simulacion se ven bien, ejecutar `enableWhatsAppAlerts`.
 8. Ejecutar `installHourlyTrigger`.
 
+El proyecto se ejecuta con dos cuentas y dos triggers instalables. `diegolezana1@gmail.com` procesa oportunidades generales y omite Workana. `diegofreelance21@gmail.com` procesa exclusivamente correos de Workana. Cada trigger usa el Gmail de la cuenta que lo crea; por eso ambas cuentas deben tener acceso al proyecto y autorizarlo por separado.
+
 ## Funcionamiento
 
 - Cada corrida revisa correos recientes en Inbox, Updates, Spam y una busqueda general reciente.
@@ -54,7 +56,7 @@ El puente consulta la instancia GREEN-API ya autorizada con el WhatsApp personal
 - Las oportunidades laborales solo pasan si piden entrevista, disponibilidad, proximos pasos, mas informacion o una respuesta concreta.
 - Solo los candidatos pasan a Groq.
 - Los mensajes de Workana se separan en invitacion, respuesta, proyecto, digest o administrativo. Como no hay remitentes operativos verificados en la allowlist, todo remitente nuevo permanece `suspicious` hasta corroborarlo dentro de Workana.
-- Un proyecto ordinario de Workana debe alcanzar encaje 7/10; invitaciones y respuestas directas pueden alertar aun con economia pendiente.
+- Un proyecto ordinario de Workana debe alcanzar encaje 6/10; se conservan los puntajes de 6 a 10. Invitaciones y respuestas directas pueden alertar aun con economia pendiente.
 - Groq devuelve JSON con decision, categoria, confianza, urgencia, motivo y accion sugerida.
 - El aviso de WhatsApp incluye analisis, accion sugerida y un borrador preliminar para revisar.
 - El sistema nunca responde correos ni envia postulaciones. La validacion y cualquier envio en Workana requieren aprobacion exacta.

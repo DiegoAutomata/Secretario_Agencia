@@ -19,6 +19,8 @@ const CONFIG = {
   ID_CHUNK_SIZE: 175,
   TIMEZONE: 'America/Argentina/Buenos_Aires',
   DEFAULT_RADAR_BRIDGE_URL: 'https://www.lezrai.com/api/radar/bridge',
+  GENERAL_MAILBOX: 'diegolezana1@gmail.com',
+  WORKANA_MAILBOX: 'diegofreelance21@gmail.com',
   WORKANA_ADMIN_SENDERS: ['academy@workana.com']
 };
 
@@ -261,14 +263,17 @@ function checkConfig() {
 function scanMailbox_(options) {
   const dryRun = Boolean(options.dryRun);
   const daysBack = options.daysBack || CONFIG.SEARCH_WINDOW_DAYS;
+  const executionMailbox = getExecutionMailbox_();
   const processedIds = loadChunkedIds_(PROP.PROCESSED_IDS);
   const notifiedIds = loadChunkedIds_(PROP.NOTIFIED_IDS);
   const messages = collectRecentMessages_(daysBack);
   const summary = {
     dryRun: dryRun,
     daysBack: daysBack,
+    executionMailbox: executionMailbox,
     scannedMessages: messages.length,
     skippedAlreadyProcessed: 0,
+    rejectedByMailbox: 0,
     rejectedByRules: 0,
     groqCandidates: 0,
     groqCalls: 0,
@@ -290,6 +295,11 @@ function scanMailbox_(options) {
     }
 
     const firstPass = classifyByRules_(email);
+    const isWorkana = Boolean(firstPass.workana && firstPass.workana.isWorkana);
+    if (!shouldProcessForMailbox_(executionMailbox, isWorkana)) {
+      summary.rejectedByMailbox++;
+      continue;
+    }
     if (!firstPass.isCandidate) {
       summary.rejectedByRules++;
       if (!dryRun) processedIds[email.id] = true;
@@ -363,6 +373,20 @@ function scanMailbox_(options) {
   }
 
   return summary;
+}
+
+function getExecutionMailbox_() {
+  return normalizeMailbox_(Session.getEffectiveUser().getEmail());
+}
+
+function shouldProcessForMailbox_(mailbox, isWorkana) {
+  const normalized = normalizeMailbox_(mailbox);
+  if (isWorkana) return normalized === CONFIG.WORKANA_MAILBOX;
+  return normalized === CONFIG.GENERAL_MAILBOX;
+}
+
+function normalizeMailbox_(value) {
+  return String(value || '').toLowerCase().trim();
 }
 
 function collectRecentMessages_(daysBack) {
@@ -453,7 +477,7 @@ function classifyWithGroq_(email, firstPass) {
           'Detect messages that could create revenue: client leads, paid collaborations, meeting requests, project requests, consulting, contractor/freelance opportunities, hiring/recruiting messages that require action, or concrete business opportunities aligned with Diego and Lezrai.',
           'Reject generic job application acknowledgements such as thanks for applying, application received, we will review your profile, or no reply required.',
           'Reject newsletters, promotions, automated alerts, spam, vendors trying to sell generic tools, receipts, login alerts, and mass marketing.',
-          'For Workana notifications, apply Diego Workana Operator criteria: score fit from 0 to 10, require at least 7 for an ordinary project alert, reject infeasible scope, weak technical fit, unverifiable mandatory experience, or uneconomic work. Direct client invitations and client replies remain actionable even when pricing details are incomplete.',
+          'For Workana notifications, apply Diego Workana Operator criteria: score fit from 0 to 10, keep scores from 6 to 10 for an ordinary project alert, reject infeasible scope, weak technical fit, unverifiable mandatory experience, or uneconomic work. Direct client invitations and client replies remain actionable even when pricing details are incomplete.',
           'A Workana email is never definitive proof that the project is authentic or still open. Any proposed text is a preliminary draft for review and local validation inside Workana; it must never claim that a proposal was sent.',
           'Return only valid JSON with these fields:',
           'is_opportunity boolean, confidence number 0-100, fit_score number 0-10, category string, urgency high|medium|low, reason string, suggested_action string, draft_reply string.'
@@ -506,7 +530,7 @@ function shouldNotify_(classification, firstPass) {
     if (firstPass.workana.eventType === 'direct_invitation' || firstPass.workana.eventType === 'client_response') {
       return classification.confidence >= 55;
     }
-    return classification.fit_score >= 7 && classification.confidence >= CONFIG.CONFIDENCE_THRESHOLD;
+    return classification.fit_score >= 6 && classification.confidence >= CONFIG.CONFIDENCE_THRESHOLD;
   }
   if (classification.confidence >= CONFIG.CONFIDENCE_THRESHOLD) return true;
   if (firstPass.explicitMatches.length > 0 && classification.confidence >= 55) return true;

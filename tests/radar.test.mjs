@@ -122,3 +122,34 @@ test('la notificacion conserva el estado Workana para mostrar la validacion pend
   assert.deepEqual(JSON.parse(JSON.stringify(alert.workana)), workana)
   assert.equal(alert.messageId, 'gmail-125')
 })
+
+test('Workana conserva proyectos con encaje de 6 a 10 y descarta 5 o menos', () => {
+  const shouldNotify = loadFunction('shouldNotify_')
+  const firstPass = {
+    explicitMatches: [],
+    workana: {
+      isWorkana: true,
+      eventType: 'new_project',
+    },
+  }
+
+  assert.equal(shouldNotify({
+    is_opportunity: true,
+    fit_score: 6,
+    confidence: 70,
+  }, firstPass), true)
+  assert.equal(shouldNotify({
+    is_opportunity: true,
+    fit_score: 5,
+    confidence: 95,
+  }, firstPass), false)
+})
+
+test('los correos Workana se procesan solo desde diegofreelance21', () => {
+  const shouldProcessForMailbox = loadFunction('shouldProcessForMailbox_')
+
+  assert.equal(shouldProcessForMailbox('diegofreelance21@gmail.com', true), true)
+  assert.equal(shouldProcessForMailbox('diegolezana1@gmail.com', true), false)
+  assert.equal(shouldProcessForMailbox('diegolezana1@gmail.com', false), true)
+  assert.equal(shouldProcessForMailbox('diegofreelance21@gmail.com', false), false)
+})
