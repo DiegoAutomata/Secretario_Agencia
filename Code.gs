@@ -19,7 +19,11 @@ const CONFIG = {
   ID_CHUNK_SIZE: 175,
   TIMEZONE: 'America/Argentina/Buenos_Aires',
   DEFAULT_RADAR_BRIDGE_URL: 'https://www.lezrai.com/api/radar/bridge',
-  GENERAL_MAILBOX: 'diegolezana1@gmail.com',
+  GENERAL_MAILBOXES: [
+    'diegolezana1@gmail.com',
+    'diegolezana7@gmail.com',
+    'diegofreelance21@gmail.com'
+  ],
   WORKANA_MAILBOX: 'diegofreelance21@gmail.com',
   WORKANA_ADMIN_SENDERS: ['academy@workana.com']
 };
@@ -382,7 +386,7 @@ function getExecutionMailbox_() {
 function shouldProcessForMailbox_(mailbox, isWorkana) {
   const normalized = normalizeMailbox_(mailbox);
   if (isWorkana) return normalized === CONFIG.WORKANA_MAILBOX;
-  return normalized === CONFIG.GENERAL_MAILBOX;
+  return CONFIG.GENERAL_MAILBOXES.indexOf(normalized) !== -1;
 }
 
 function normalizeMailbox_(value) {

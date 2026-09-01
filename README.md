@@ -46,7 +46,7 @@ El puente consulta la instancia GREEN-API ya autorizada con el WhatsApp personal
 7. Si la prueba y la simulacion se ven bien, ejecutar `enableWhatsAppAlerts`.
 8. Ejecutar `installHourlyTrigger`.
 
-El proyecto se ejecuta con dos cuentas y dos triggers instalables. `diegolezana1@gmail.com` procesa oportunidades generales y omite Workana. `diegofreelance21@gmail.com` procesa exclusivamente correos de Workana. Cada trigger usa el Gmail de la cuenta que lo crea; por eso ambas cuentas deben tener acceso al proyecto y autorizarlo por separado.
+El proyecto se ejecuta con tres cuentas y tres triggers instalables. `diegolezana1@gmail.com`, `diegolezana7@gmail.com` y `diegofreelance21@gmail.com` procesan oportunidades generales. Los correos de Workana se aceptan exclusivamente cuando el trigger corre bajo `diegofreelance21@gmail.com`. Cada trigger usa el Gmail de la cuenta que lo crea; por eso las tres cuentas deben tener acceso al proyecto y autorizarlo por separado.
 
 ## Funcionamiento
 

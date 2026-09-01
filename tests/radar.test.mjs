@@ -145,11 +145,14 @@ test('Workana conserva proyectos con encaje de 6 a 10 y descarta 5 o menos', () 
   }, firstPass), false)
 })
 
-test('los correos Workana se procesan solo desde diegofreelance21', () => {
+test('las tres cuentas procesan oportunidades generales y solo freelance procesa Workana', () => {
   const shouldProcessForMailbox = loadFunction('shouldProcessForMailbox_')
 
   assert.equal(shouldProcessForMailbox('diegofreelance21@gmail.com', true), true)
   assert.equal(shouldProcessForMailbox('diegolezana1@gmail.com', true), false)
+  assert.equal(shouldProcessForMailbox('diegolezana7@gmail.com', true), false)
   assert.equal(shouldProcessForMailbox('diegolezana1@gmail.com', false), true)
-  assert.equal(shouldProcessForMailbox('diegofreelance21@gmail.com', false), false)
+  assert.equal(shouldProcessForMailbox('diegolezana7@gmail.com', false), true)
+  assert.equal(shouldProcessForMailbox('diegofreelance21@gmail.com', false), true)
+  assert.equal(shouldProcessForMailbox('otra@gmail.com', false), false)
 })
