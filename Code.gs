@@ -3,7 +3,7 @@
  *
  * Google Apps Script 24/7 monitor for detecting commercial opportunities in Gmail.
  * It uses a cheap local filter first, then asks Groq only about promising messages,
- * and sends Telegram alerts only when a real opportunity is detected.
+ * and sends WhatsApp alerts only when a real opportunity is detected.
  */
 
 const CONFIG = {
@@ -17,16 +17,18 @@ const CONFIG = {
   STRONG_RULE_SCORE: 4,
   MAX_STORED_IDS: 700,
   ID_CHUNK_SIZE: 175,
-  DEFAULT_GROQ_MODEL: 'llama-3.1-8b-instant',
-  TIMEZONE: 'America/Argentina/Buenos_Aires'
+  TIMEZONE: 'America/Argentina/Buenos_Aires',
+  DEFAULT_RADAR_BRIDGE_URL: 'https://www.lezrai.com/api/radar/bridge',
+  WORKANA_ADMIN_SENDERS: ['academy@workana.com']
 };
 
 const PROP = {
-  GROQ_API_KEY: 'GROQ_API_KEY',
-  GROQ_MODEL: 'GROQ_MODEL',
+  RADAR_BRIDGE_URL: 'RADAR_BRIDGE_URL',
+  RADAR_BRIDGE_SECRET: 'RADAR_BRIDGE_SECRET',
   TELEGRAM_BOT_TOKEN: 'TELEGRAM_BOT_TOKEN',
   TELEGRAM_CHAT_ID: 'TELEGRAM_CHAT_ID',
   ENABLE_TELEGRAM_ALERTS: 'ENABLE_TELEGRAM_ALERTS',
+  ENABLE_WHATSAPP_ALERTS: 'ENABLE_WHATSAPP_ALERTS',
   PROCESSED_IDS: 'PROCESSED_MESSAGE_IDS',
   NOTIFIED_IDS: 'NOTIFIED_MESSAGE_IDS',
   LAST_RUN_AT: 'LAST_RUN_AT'
@@ -105,15 +107,19 @@ const REAL_JOB_OPPORTUNITY_PATTERNS = [
 ];
 
 /**
- * Run this once after adding script properties. It installs the 5-minute trigger.
+ * Run this once after adding script properties. It installs the hourly trigger.
  */
-function installFiveMinuteTrigger() {
+function installHourlyTrigger() {
   deleteMonitorTriggers_();
   ScriptApp.newTrigger('runMonitor')
     .timeBased()
-    .everyMinutes(5)
+    .everyHours(1)
     .create();
-  Logger.log('Installed 5-minute trigger for runMonitor.');
+  Logger.log('Installed hourly trigger for runMonitor.');
+}
+
+function installFiveMinuteTrigger() {
+  installHourlyTrigger();
 }
 
 /**
@@ -128,7 +134,8 @@ function runMonitor() {
   }
 
   try {
-    const alertsEnabled = getRequiredProperty_(PROP.ENABLE_TELEGRAM_ALERTS) === 'true';
+    const alertsEnabled = getRequiredProperty_(PROP.ENABLE_WHATSAPP_ALERTS) === 'true' ||
+      getRequiredProperty_(PROP.ENABLE_TELEGRAM_ALERTS) === 'true';
     const result = scanMailbox_({
       dryRun: !alertsEnabled,
       daysBack: CONFIG.SEARCH_WINDOW_DAYS
@@ -143,7 +150,7 @@ function runMonitor() {
 }
 
 /**
- * Safe review over the last 7 days. It never sends Telegram and never marks
+ * Safe review over the last 7 days. It never sends alerts and never marks
  * messages as processed.
  */
 function simulateLast7Days() {
@@ -177,6 +184,19 @@ function testTelegram() {
 }
 
 /**
+ * Sends one clearly labelled WhatsApp transport test to the configured group.
+ * Run only after the exact destination and message have been approved.
+ */
+function testWhatsApp() {
+  sendWhatsAppText_([
+    '📡 *Prueba del Radar de oportunidades*',
+    '',
+    'Canal conectado correctamente.',
+    'Esta prueba no responde correos ni envia postulaciones.'
+  ].join('\n'));
+}
+
+/**
  * Turns real alerts on. Run this only after simulation looks good.
  */
 function enableTelegramAlerts() {
@@ -190,6 +210,16 @@ function enableTelegramAlerts() {
 function disableTelegramAlerts() {
   PropertiesService.getScriptProperties().setProperty(PROP.ENABLE_TELEGRAM_ALERTS, 'false');
   Logger.log('Telegram alerts disabled. Monitor is in simulation mode.');
+}
+
+function enableWhatsAppAlerts() {
+  PropertiesService.getScriptProperties().setProperty(PROP.ENABLE_WHATSAPP_ALERTS, 'true');
+  Logger.log('WhatsApp alerts enabled.');
+}
+
+function disableWhatsAppAlerts() {
+  PropertiesService.getScriptProperties().setProperty(PROP.ENABLE_WHATSAPP_ALERTS, 'false');
+  Logger.log('WhatsApp alerts disabled. Monitor is in simulation mode unless Telegram is enabled.');
 }
 
 /**
@@ -216,11 +246,12 @@ function clearMonitorState() {
 function checkConfig() {
   const props = PropertiesService.getScriptProperties();
   const status = {
-    groqApiKey: Boolean(props.getProperty(PROP.GROQ_API_KEY)),
-    groqModel: props.getProperty(PROP.GROQ_MODEL) || CONFIG.DEFAULT_GROQ_MODEL,
+    radarBridgeUrl: props.getProperty(PROP.RADAR_BRIDGE_URL) || CONFIG.DEFAULT_RADAR_BRIDGE_URL,
+    radarBridgeSecret: Boolean(props.getProperty(PROP.RADAR_BRIDGE_SECRET)),
     telegramBotToken: Boolean(props.getProperty(PROP.TELEGRAM_BOT_TOKEN)),
     telegramChatId: Boolean(props.getProperty(PROP.TELEGRAM_CHAT_ID)),
-    alertsEnabled: props.getProperty(PROP.ENABLE_TELEGRAM_ALERTS) === 'true',
+    telegramAlertsEnabled: props.getProperty(PROP.ENABLE_TELEGRAM_ALERTS) === 'true',
+    whatsappAlertsEnabled: props.getProperty(PROP.ENABLE_WHATSAPP_ALERTS) === 'true',
     lastRunAt: props.getProperty(PROP.LAST_RUN_AT) || null
   };
   Logger.log(JSON.stringify(status, null, 2));
@@ -287,15 +318,7 @@ function scanMailbox_(options) {
       summary.opportunities.push(alert);
 
       if (!dryRun && !notifiedIds[email.id]) {
-        sendTelegramAlert_({
-          dryRun: false,
-          messageId: email.id,
-          from: email.from,
-          subject: email.subject,
-          date: email.date,
-          permalink: email.permalink,
-          classification: classification
-        });
+        sendConfiguredAlert_(createNotificationAlert_(email, classification, firstPass));
         notifiedIds[email.id] = true;
         processedIds[email.id] = true;
       }
@@ -320,15 +343,7 @@ function scanMailbox_(options) {
       summary.fallbackAlerts.push(alert);
 
       if (!dryRun && !notifiedIds[email.id]) {
-        sendTelegramAlert_({
-          dryRun: false,
-          messageId: email.id,
-          from: email.from,
-          subject: email.subject,
-          date: email.date,
-          permalink: email.permalink,
-          classification: fallbackClassification
-        });
+        sendConfiguredAlert_(createNotificationAlert_(email, fallbackClassification, firstPass));
         notifiedIds[email.id] = true;
         processedIds[email.id] = true;
       }
@@ -410,25 +425,22 @@ function classifyByRules_(email) {
   const hasExplicitIntent = explicitMatches.length > 0 || realJobMatches.length > 0;
   const looksLikeAutomatedNoise = negativeScore >= 2 && !hasExplicitIntent && subjectMatches.length === 0;
 
+  const workana = classifyWorkanaEmail_(email);
   return {
-    isCandidate: !automatedJobApplicationAck && !looksLikeAutomatedNoise && (score >= 2 || hasExplicitIntent),
+    isCandidate: workana.shouldAlert || (!automatedJobApplicationAck && !looksLikeAutomatedNoise && (score >= 2 || hasExplicitIntent)),
     isStrong: !automatedJobApplicationAck && !looksLikeAutomatedNoise && (score >= CONFIG.STRONG_RULE_SCORE || (hasExplicitIntent && positiveScore >= 3)),
     score: score,
     positiveMatches: positiveMatches,
     negativeMatches: negativeMatches,
     explicitMatches: explicitMatches.concat(realJobMatches),
-    jobApplicationAckMatches: jobAckMatches
+    jobApplicationAckMatches: jobAckMatches,
+    workana: workana
   };
 }
 
 function classifyWithGroq_(email, firstPass) {
-  const apiKey = getRequiredProperty_(PROP.GROQ_API_KEY);
-  const model = getRequiredProperty_(PROP.GROQ_MODEL) || CONFIG.DEFAULT_GROQ_MODEL;
   const payload = {
-    model: model,
-    temperature: 0,
-    max_completion_tokens: 350,
-    response_format: { type: 'json_object' },
+    action: 'classify',
     messages: [
       {
         role: 'system',
@@ -441,8 +453,10 @@ function classifyWithGroq_(email, firstPass) {
           'Detect messages that could create revenue: client leads, paid collaborations, meeting requests, project requests, consulting, contractor/freelance opportunities, hiring/recruiting messages that require action, or concrete business opportunities aligned with Diego and Lezrai.',
           'Reject generic job application acknowledgements such as thanks for applying, application received, we will review your profile, or no reply required.',
           'Reject newsletters, promotions, automated alerts, spam, vendors trying to sell generic tools, receipts, login alerts, and mass marketing.',
+          'For Workana notifications, apply Diego Workana Operator criteria: score fit from 0 to 10, require at least 7 for an ordinary project alert, reject infeasible scope, weak technical fit, unverifiable mandatory experience, or uneconomic work. Direct client invitations and client replies remain actionable even when pricing details are incomplete.',
+          'A Workana email is never definitive proof that the project is authentic or still open. Any proposed text is a preliminary draft for review and local validation inside Workana; it must never claim that a proposal was sent.',
           'Return only valid JSON with these fields:',
-          'is_opportunity boolean, confidence number 0-100, category string, urgency high|medium|low, reason string, suggested_action string.'
+          'is_opportunity boolean, confidence number 0-100, fit_score number 0-10, category string, urgency high|medium|low, reason string, suggested_action string, draft_reply string.'
         ].join(' ')
       },
       {
@@ -457,26 +471,19 @@ function classifyWithGroq_(email, firstPass) {
           local_positive_matches: firstPass.positiveMatches,
           local_explicit_matches: firstPass.explicitMatches,
           local_job_application_ack_matches: firstPass.jobApplicationAckMatches,
-          local_negative_matches: firstPass.negativeMatches
+          local_negative_matches: firstPass.negativeMatches,
+          workana_email_intake: firstPass.workana
         })
       }
     ]
   };
 
-  const response = UrlFetchApp.fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: {
-      Authorization: 'Bearer ' + apiKey
-    },
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  });
+  const response = callRadarBridge_(payload);
 
   const status = response.getResponseCode();
   const text = response.getContentText();
   if (status < 200 || status >= 300) {
-    throw new Error('Groq HTTP ' + status + ': ' + trimText_(text, 500));
+    throw new Error('Radar bridge classification HTTP ' + status + ': ' + trimText_(text, 500));
   }
 
   const data = JSON.parse(text);
@@ -495,6 +502,12 @@ function classifyWithGroq_(email, firstPass) {
 
 function shouldNotify_(classification, firstPass) {
   if (!classification || !classification.is_opportunity) return false;
+  if (firstPass.workana && firstPass.workana.isWorkana) {
+    if (firstPass.workana.eventType === 'direct_invitation' || firstPass.workana.eventType === 'client_response') {
+      return classification.confidence >= 55;
+    }
+    return classification.fit_score >= 7 && classification.confidence >= CONFIG.CONFIDENCE_THRESHOLD;
+  }
   if (classification.confidence >= CONFIG.CONFIDENCE_THRESHOLD) return true;
   if (firstPass.explicitMatches.length > 0 && classification.confidence >= 55) return true;
   return false;
@@ -510,11 +523,111 @@ function buildAlertRecord_(email, classification, firstPass, source) {
     category: classification.category,
     urgency: classification.urgency,
     confidence: classification.confidence,
+    fitScore: classification.fit_score,
     reason: classification.reason,
     suggestedAction: classification.suggested_action,
+    draftReply: classification.draft_reply,
+    workana: firstPass.workana,
     localScore: firstPass.score,
     permalink: email.permalink
   };
+}
+
+function createNotificationAlert_(email, classification, firstPass) {
+  return {
+    dryRun: false,
+    messageId: email.id,
+    from: email.from,
+    subject: email.subject,
+    date: email.date,
+    permalink: email.permalink,
+    classification: classification,
+    workana: firstPass.workana
+  };
+}
+
+function classifyWorkanaEmail_(email) {
+  const sender = extractEmailAddress_(email.from);
+  const senderDomain = sender.split('@')[1] || '';
+  const text = normalize_([email.subject, email.excerpt].join(' '));
+  const isWorkana = senderDomain === 'workana.com' || senderDomain.endsWith('.workana.com');
+
+  if (!isWorkana) {
+    return {
+      isWorkana: false,
+      eventType: 'none',
+      authenticity: 'not_applicable',
+      requiresLocalValidation: false,
+      operatorMode: 'none',
+      shouldAlert: false,
+      safeProjectUrls: []
+    };
+  }
+
+  if (CONFIG.WORKANA_ADMIN_SENDERS.indexOf(sender) !== -1) {
+    return {
+      isWorkana: true,
+      eventType: 'administrative',
+      authenticity: 'candidate',
+      requiresLocalValidation: false,
+      operatorMode: 'none',
+      shouldAlert: false,
+      safeProjectUrls: []
+    };
+  }
+
+  let eventType = 'new_project';
+  let operatorMode = 'prospecting';
+  if (/invitacion|invitation|te invito|invited you/.test(text)) {
+    eventType = 'direct_invitation';
+    operatorMode = 'commercial_conversation';
+  } else if (/respondio|respuesta|replied|mensaje nuevo|new message/.test(text)) {
+    eventType = 'client_response';
+    operatorMode = 'commercial_conversation';
+  } else if (/resumen|digest|proyectos para ti|projects for you/.test(text)) {
+    eventType = 'project_digest';
+  }
+
+  return {
+    isWorkana: true,
+    eventType: eventType,
+    authenticity: 'suspicious',
+    requiresLocalValidation: true,
+    operatorMode: operatorMode,
+    shouldAlert: true,
+    safeProjectUrls: extractSafeWorkanaUrls_([email.subject, email.excerpt].join(' '))
+  };
+}
+
+function extractSafeWorkanaUrls_(text) {
+  const matches = String(text || '').match(/https?:\/\/[^\s<>"']+/gi) || [];
+  const seen = {};
+  const result = [];
+
+  matches.forEach(function(raw) {
+    const candidate = raw.replace(/[),.;!?]+$/, '');
+    const parsed = candidate.match(/^https:\/\/([^\/?#]+)(.*)$/i);
+    if (!parsed) return;
+    const authority = parsed[1].toLowerCase();
+    if (authority.indexOf('@') !== -1 || authority.indexOf(':') !== -1) return;
+    const safeHost = authority === 'workana.com' || authority.endsWith('.workana.com');
+    if (!safeHost) return;
+    const normalized = ('https://' + authority + parsed[2]).replace(/\/$/, '');
+    if (!seen[normalized]) {
+      seen[normalized] = true;
+      result.push(normalized);
+    }
+  });
+
+  return result;
+}
+
+function extractEmailAddress_(value) {
+  const text = String(value || '').toLowerCase().trim();
+  const angle = text.match(/<([^<>\s]+@[^<>\s]+)>/);
+  if (angle) return angle[1];
+  const plain = text.match(/[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9.-]+/);
+  return plain ? plain[0] : '';
 }
 
 function sendTelegramAlert_(alert) {
@@ -559,6 +672,88 @@ function sendTelegramAlert_(alert) {
   }
 }
 
+function sendConfiguredAlert_(alert) {
+  if (getRequiredProperty_(PROP.ENABLE_WHATSAPP_ALERTS) === 'true') {
+    sendWhatsAppAlert_(alert);
+    return;
+  }
+  sendTelegramAlert_(alert);
+}
+
+function getRadarBridgeConfig_() {
+  return {
+    url: getRequiredProperty_(PROP.RADAR_BRIDGE_URL) || CONFIG.DEFAULT_RADAR_BRIDGE_URL,
+    secret: getRequiredProperty_(PROP.RADAR_BRIDGE_SECRET)
+  };
+}
+
+function buildRadarBridgeRequest_(config, payload) {
+  const url = String(config.url || CONFIG.DEFAULT_RADAR_BRIDGE_URL).replace(/\/+$/, '');
+  return {
+    url: url,
+    options: {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + config.secret },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    }
+  };
+}
+
+function callRadarBridge_(payload) {
+  const config = getRadarBridgeConfig_();
+  if (!config.secret) throw new Error('RADAR_BRIDGE_SECRET is not configured.');
+  const request = buildRadarBridgeRequest_(config, payload);
+  return UrlFetchApp.fetch(request.url, request.options);
+}
+
+function buildWhatsAppMessage_(alert) {
+  const c = alert.classification || {};
+  const dateText = Utilities.formatDate(alert.date, CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm');
+  const workana = alert.workana || c.workana || null;
+  const lines = [
+    '📡 *Radar de oportunidades*',
+    '',
+    '*De:* ' + (alert.from || '(sin remitente)'),
+    '*Asunto:* ' + (alert.subject || '(sin asunto)'),
+    '*Fecha:* ' + dateText,
+    '*Categoria:* ' + (c.category || 'sin categoria'),
+    '*Urgencia:* ' + (c.urgency || 'medium'),
+    '*Confianza:* ' + String(c.confidence || 0) + '%'
+  ];
+
+  if (c.fit_score !== undefined && c.fit_score !== null) {
+    lines.push('*Encaje:* ' + String(c.fit_score) + '/10');
+  }
+  if (workana && workana.isWorkana) {
+    lines.push('*Workana:* ' + workana.eventType + ' · ' + workana.authenticity);
+    lines.push('*Validacion local requerida:* si');
+  }
+
+  lines.push('', '*Analisis:* ' + (c.reason || 'Sin motivo informado.'));
+  lines.push('*Accion sugerida:* ' + (c.suggested_action || 'Revisar correo.'));
+  if (c.draft_reply) {
+    lines.push('', '*Borrador para revisar:*', c.draft_reply);
+  }
+  if (alert.permalink) lines.push('', 'Gmail: ' + alert.permalink);
+  lines.push('', '🔒 No se envio ninguna respuesta ni postulacion.');
+  return trimText_(lines.join('\n'), 3900);
+}
+
+function sendWhatsAppAlert_(alert) {
+  sendWhatsAppText_(buildWhatsAppMessage_(alert));
+}
+
+function sendWhatsAppText_(message) {
+  const response = callRadarBridge_({ action: 'notify', message: message });
+  const status = response.getResponseCode();
+  const body = JSON.parse(response.getContentText() || '{}');
+  if (status < 200 || status >= 300 || body.ok !== true || !body.messageId) {
+    throw new Error('Radar bridge notification HTTP ' + status + ': ' + trimText_(response.getContentText(), 500));
+  }
+}
+
 function deleteMonitorTriggers_() {
   ScriptApp.getProjectTriggers().forEach(function(trigger) {
     if (trigger.getHandlerFunction() === 'runMonitor') {
@@ -568,7 +763,7 @@ function deleteMonitorTriggers_() {
 }
 
 function hasGroqKey_() {
-  return Boolean(PropertiesService.getScriptProperties().getProperty(PROP.GROQ_API_KEY));
+  return Boolean(PropertiesService.getScriptProperties().getProperty(PROP.RADAR_BRIDGE_SECRET));
 }
 
 function getRequiredProperty_(key) {
@@ -622,10 +817,12 @@ function normalizeClassification_(raw) {
   return {
     is_opportunity: Boolean(raw.is_opportunity),
     confidence: clamp_(Number(raw.confidence || 0), 0, 100),
+    fit_score: clamp_(Number(raw.fit_score || 0), 0, 10),
     category: String(raw.category || 'other'),
     urgency: normalizeUrgency_(raw.urgency),
     reason: String(raw.reason || ''),
-    suggested_action: String(raw.suggested_action || '')
+    suggested_action: String(raw.suggested_action || ''),
+    draft_reply: String(raw.draft_reply || '')
   };
 }
 

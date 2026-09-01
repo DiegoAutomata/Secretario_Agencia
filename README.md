@@ -1,6 +1,6 @@
-# Gmail Opportunity Monitor
+# Secretario Agencia — Radar Gmail + Workana
 
-Monitor gratis 24/7 para detectar oportunidades comerciales en Gmail, validarlas con Groq y avisar por Telegram.
+Monitor cloud 24/7 para detectar oportunidades comerciales en Gmail, aplicar los filtros de Diego/Lezrai y Workana Operator, redactar un borrador para revisión y avisar a un grupo de WhatsApp mediante el puente privado de Lezrai.
 
 Esta version esta ajustada para Diego Lezana y Lezrai: sistemas digitales para agencias que escalan, agentes de IA, automatizaciones, integraciones, plataformas premium, portales de cliente, onboarding automatizado, y oportunidades laborales/recruiting reales que requieran respuesta.
 
@@ -19,28 +19,16 @@ Esta version esta ajustada para Diego Lezana y Lezrai: sistemas digitales para a
 5. En `Project Settings` > `Script Properties`, crear estas propiedades:
 
 ```text
-GROQ_API_KEY=tu_api_key_de_groq
-GROQ_MODEL=llama-3.1-8b-instant
-TELEGRAM_BOT_TOKEN=token_del_bot
-TELEGRAM_CHAT_ID=tu_chat_id
-ENABLE_TELEGRAM_ALERTS=false
+RADAR_BRIDGE_URL=https://www.lezrai.com/api/radar/bridge
+RADAR_BRIDGE_SECRET=secreto_largo_del_radar
+ENABLE_WHATSAPP_ALERTS=false
 ```
 
-`ENABLE_TELEGRAM_ALERTS=false` es intencional: deja el sistema en modo simulacion.
+`ENABLE_WHATSAPP_ALERTS=false` es intencional: deja el sistema en simulacion hasta validar el grupo y aprobar el mensaje de prueba. Groq y GREEN-API permanecen en Vercel; sus claves no se copian a Apps Script. Las propiedades antiguas de Telegram siguen siendo compatibles como rollback, pero no son el canal recomendado.
 
-## Crear Telegram Bot
+## Obtener el identificador del grupo
 
-1. Abrir Telegram y hablar con `@BotFather`.
-2. Crear un bot con `/newbot`.
-3. Copiar el token en `TELEGRAM_BOT_TOKEN`.
-4. Enviarle un mensaje cualquiera al bot.
-5. Obtener tu `chat_id` con:
-
-```text
-https://api.telegram.org/botTU_TOKEN/getUpdates
-```
-
-Buscar `chat.id` en la respuesta y guardarlo como `TELEGRAM_CHAT_ID`.
+El puente consulta la instancia GREEN-API ya autorizada con el WhatsApp personal y resuelve exactamente un grupo llamado `Lezrai | Radar de oportunidades`. Si no existe o hay dos grupos con ese nombre, rechaza el envío. No reutiliza el `chatId` de `Lezrai Leads` ni la instancia Evolution de TAOS.
 
 ## Primeras pruebas
 
@@ -53,9 +41,10 @@ Buscar `chat.id` en la respuesta y guardarlo como `TELEGRAM_CHAT_ID`.
    - oportunidades detectadas;
    - alertas fallback.
 4. Ajustar palabras clave o umbral si hiciera falta.
-5. Ejecutar `testTelegram`.
-6. Si llega el mensaje de prueba y la simulacion se ve bien, ejecutar `enableTelegramAlerts`.
-7. Ejecutar `installFiveMinuteTrigger`.
+5. Mostrar y aprobar el texto exacto de la prueba.
+6. Ejecutar `testWhatsApp` y verificar el mensaje dentro del grupo, no sólo la respuesta HTTP.
+7. Si la prueba y la simulacion se ven bien, ejecutar `enableWhatsAppAlerts`.
+8. Ejecutar `installHourlyTrigger`.
 
 ## Funcionamiento
 
@@ -64,29 +53,32 @@ Buscar `chat.id` en la respuesta y guardarlo como `TELEGRAM_CHAT_ID`.
 - Tambien descarta confirmaciones automaticas de postulacion como "gracias por postularte", "application received" o "we will review your application".
 - Las oportunidades laborales solo pasan si piden entrevista, disponibilidad, proximos pasos, mas informacion o una respuesta concreta.
 - Solo los candidatos pasan a Groq.
+- Los mensajes de Workana se separan en invitacion, respuesta, proyecto, digest o administrativo. Como no hay remitentes operativos verificados en la allowlist, todo remitente nuevo permanece `suspicious` hasta corroborarlo dentro de Workana.
+- Un proyecto ordinario de Workana debe alcanzar encaje 7/10; invitaciones y respuestas directas pueden alertar aun con economia pendiente.
 - Groq devuelve JSON con decision, categoria, confianza, urgencia, motivo y accion sugerida.
-- Telegram se envia solo si la confianza supera el umbral o si hay un pedido comercial explicito.
+- El aviso de WhatsApp incluye analisis, accion sugerida y un borrador preliminar para revisar.
+- El sistema nunca responde correos ni envia postulaciones. La validacion y cualquier envio en Workana requieren aprobacion exacta.
 - Si Groq falla, los correos con senales fuertes igual generan alerta fallback.
 - No responde, archiva, borra ni etiqueta correos.
 
 ## Seguridad y costos
 
 - No hay claves hardcodeadas en el codigo.
-- El sistema usa Google Apps Script, Telegram Bot API y Groq.
+- El sistema usa Google Apps Script y un puente privado en `lezrai.com`; GREEN-API y Groq sólo se invocan dentro de Vercel.
 - Para reducir costos y cuidar privacidad, Groq recibe solo remitente, asunto, fecha, snippet y extracto corto.
 - El monitor guarda IDs procesados en `PropertiesService` para evitar duplicados.
 
 ## Operacion
 
-- Apagar alertas reales: ejecutar `disableTelegramAlerts`.
+- Apagar alertas reales: ejecutar `disableWhatsAppAlerts`.
 - Borrar estado de deduplicacion: ejecutar `clearMonitorState`.
 - Eliminar el trigger: ejecutar `uninstallMonitor`.
-- Volver a instalar el trigger: ejecutar `installFiveMinuteTrigger`.
+- Volver a instalar el trigger: ejecutar `installHourlyTrigger`.
 
 ## Fuentes tecnicas revisadas
 
 - Groq Chat Completions API: https://console.groq.com/docs/api-reference
 - Groq supported models: https://console.groq.com/docs/models
-- Telegram `sendMessage`: https://core.telegram.org/bots/api#sendmessage
+- GREEN-API `sendMessage`: https://green-api.com/en/docs/api/sending/SendMessage/
 - Apps Script Gmail service: https://developers.google.com/apps-script/reference/gmail/gmail-app
 - Apps Script PropertiesService: https://developers.google.com/apps-script/reference/properties/properties-service
