@@ -9,8 +9,9 @@ function loadFunction(name) {
   const sandbox = {
     console,
     Utilities: {
-      formatDate(date) {
-        return date.toISOString().slice(0, 16).replace('T', ' ')
+      formatDate(date, _timezone, pattern) {
+        const length = pattern?.includes('ss') ? 19 : 16
+        return date.toISOString().slice(0, length).replace('T', ' ')
       },
     },
   }
@@ -155,4 +156,105 @@ test('las tres cuentas procesan oportunidades generales y solo freelance procesa
   assert.equal(shouldProcessForMailbox('diegolezana7@gmail.com', false), true)
   assert.equal(shouldProcessForMailbox('diegofreelance21@gmail.com', false), true)
   assert.equal(shouldProcessForMailbox('otra@gmail.com', false), false)
+})
+
+test('crea un handoff Workana estable y accionable desde una oportunidad de Gmail', () => {
+  const buildWorkanaMailHandoff = loadFunction('buildWorkanaMailHandoff_')
+  const handoff = buildWorkanaMailHandoff({
+    id: '18f42abc901def77',
+    from: 'Workana <projects@workana.com>',
+    subject: 'Nuevo proyecto de agente con IA',
+    date: new Date('2026-09-03T18:00:00Z'),
+    permalink: 'https://mail.google.com/mail/u/2/#inbox/18f42abc901def77',
+  }, {
+    category: 'workana_project',
+    urgency: 'high',
+    confidence: 91,
+    fit_score: 7,
+    reason: 'El alcance coincide con agentes e integraciones.',
+    suggested_action: 'Validar el proyecto en Workana.',
+    draft_reply: 'Hola, revisé el objetivo del proyecto.',
+  }, {
+    workana: {
+      isWorkana: true,
+      eventType: 'new_project',
+      authenticity: 'suspicious',
+      requiresLocalValidation: true,
+      operatorMode: 'prospecting',
+      safeProjectUrls: ['https://www.workana.com/job/agente-con-ia'],
+    },
+  })
+
+  assert.deepEqual(JSON.parse(JSON.stringify(handoff)), {
+    id: 'WK-901DEF77',
+    gmailMessageId: '18f42abc901def77',
+    gmailPermalink: 'https://mail.google.com/mail/u/2/#inbox/18f42abc901def77',
+    eventType: 'new_project',
+    sender: 'Workana <projects@workana.com>',
+    subject: 'Nuevo proyecto de agente con IA',
+    projectUrls: ['https://www.workana.com/job/agente-con-ia'],
+    summary: 'El alcance coincide con agentes e integraciones.',
+    suggestedAction: 'Validar el proyecto en Workana.',
+    draftReply: 'Hola, revisé el objetivo del proyecto.',
+    fitScore: 7,
+    confidence: 91,
+    urgency: 'high',
+    operatorMode: 'prospecting',
+    authenticity: 'suspicious',
+    status: 'pending_local_validation',
+    detectedAt: '2026-09-03 18:00:00',
+  })
+})
+
+test('la cola Workana deduplica por id, conserva el estado avanzado y limita su tamano', () => {
+  const upsertWorkanaHandoffQueue = loadFunction('upsertWorkanaHandoffQueue_')
+  const queue = [
+    { id: 'WK-OLD00001', status: 'pending_local_validation', subject: 'Viejo' },
+    { id: 'WK-SAME0002', status: 'approved', subject: 'Version anterior' },
+  ]
+
+  const result = upsertWorkanaHandoffQueue(queue, {
+    id: 'WK-SAME0002',
+    status: 'pending_local_validation',
+    subject: 'Version nueva',
+  }, 2)
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), [
+    { id: 'WK-OLD00001', status: 'pending_local_validation', subject: 'Viejo' },
+    { id: 'WK-SAME0002', status: 'approved', subject: 'Version nueva' },
+  ])
+
+  const capped = upsertWorkanaHandoffQueue(result, {
+    id: 'WK-NEW00003', status: 'pending_local_validation', subject: 'Nuevo' }, 2)
+  assert.deepEqual(Array.from(capped, (item) => item.id), ['WK-SAME0002', 'WK-NEW00003'])
+})
+
+test('la alerta Workana incluye el id y el comando corto de revision', () => {
+  const buildWhatsAppMessage = loadFunction('buildWhatsAppMessage_')
+  const message = buildWhatsAppMessage({
+    messageId: '18f42abc901def77',
+    from: 'Workana <projects@workana.com>',
+    subject: 'Nuevo proyecto de agente con IA',
+    date: new Date('2026-09-03T18:00:00Z'),
+    permalink: 'https://mail.google.com/mail/u/2/#inbox/18f42abc901def77',
+    workanaHandoff: { id: 'WK-901DEF77' },
+    classification: {
+      category: 'workana_project',
+      urgency: 'high',
+      confidence: 91,
+      fit_score: 7,
+      reason: 'Buen encaje.',
+      suggested_action: 'Validar en Workana.',
+      draft_reply: 'Hola, revisé el proyecto.',
+    },
+    workana: {
+      isWorkana: true,
+      eventType: 'new_project',
+      authenticity: 'suspicious',
+    },
+  })
+
+  assert.match(message, /\*ID:\* WK-901DEF77/)
+  assert.match(message, /Revisar WK-901DEF77/)
+  assert.match(message, /no autoriza el envio/i)
 })

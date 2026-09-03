@@ -16,6 +16,7 @@ const CONFIG = {
   CONFIDENCE_THRESHOLD: 70,
   STRONG_RULE_SCORE: 4,
   MAX_STORED_IDS: 700,
+  MAX_WORKANA_HANDOFFS: 60,
   ID_CHUNK_SIZE: 175,
   TIMEZONE: 'America/Argentina/Buenos_Aires',
   DEFAULT_RADAR_BRIDGE_URL: 'https://www.lezrai.com/api/radar/bridge',
@@ -37,6 +38,8 @@ const PROP = {
   ENABLE_WHATSAPP_ALERTS: 'ENABLE_WHATSAPP_ALERTS',
   PROCESSED_IDS: 'PROCESSED_MESSAGE_IDS',
   NOTIFIED_IDS: 'NOTIFIED_MESSAGE_IDS',
+  WORKANA_HANDOFF_INDEX: 'WORKANA_HANDOFF_INDEX',
+  WORKANA_HANDOFF_PREFIX: 'WORKANA_HANDOFF_',
   LAST_RUN_AT: 'LAST_RUN_AT'
 };
 
@@ -242,6 +245,7 @@ function uninstallMonitor() {
 function clearMonitorState() {
   deleteChunkedIds_(PROP.PROCESSED_IDS);
   deleteChunkedIds_(PROP.NOTIFIED_IDS);
+  clearWorkanaHandoffQueue_();
   PropertiesService.getScriptProperties().deleteProperty(PROP.LAST_RUN_AT);
   Logger.log('Monitor state cleared.');
 }
@@ -270,6 +274,7 @@ function scanMailbox_(options) {
   const executionMailbox = getExecutionMailbox_();
   const processedIds = loadChunkedIds_(PROP.PROCESSED_IDS);
   const notifiedIds = loadChunkedIds_(PROP.NOTIFIED_IDS);
+  let workanaHandoffQueue = loadWorkanaHandoffQueue_();
   const messages = collectRecentMessages_(daysBack);
   const summary = {
     dryRun: dryRun,
@@ -282,6 +287,8 @@ function scanMailbox_(options) {
     groqCandidates: 0,
     groqCalls: 0,
     opportunities: [],
+    workanaHandoffs: [],
+    pendingWorkanaHandoffs: [],
     fallbackAlerts: [],
     pendingRetries: [],
     errors: []
@@ -331,8 +338,19 @@ function scanMailbox_(options) {
       const alert = buildAlertRecord_(email, classification, firstPass, 'groq');
       summary.opportunities.push(alert);
 
+      let workanaHandoff = null;
+      if (firstPass.workana && firstPass.workana.isWorkana) {
+        workanaHandoff = buildWorkanaMailHandoff_(email, classification, firstPass);
+        summary.workanaHandoffs.push(workanaHandoff);
+        workanaHandoffQueue = upsertWorkanaHandoffQueue_(
+          workanaHandoffQueue,
+          workanaHandoff,
+          CONFIG.MAX_WORKANA_HANDOFFS
+        );
+      }
+
       if (!dryRun && !notifiedIds[email.id]) {
-        sendConfiguredAlert_(createNotificationAlert_(email, classification, firstPass));
+        sendConfiguredAlert_(createNotificationAlert_(email, classification, firstPass, workanaHandoff));
         notifiedIds[email.id] = true;
         processedIds[email.id] = true;
       }
@@ -374,6 +392,13 @@ function scanMailbox_(options) {
   if (!dryRun) {
     saveChunkedIds_(PROP.PROCESSED_IDS, processedIds);
     saveChunkedIds_(PROP.NOTIFIED_IDS, notifiedIds);
+    saveWorkanaHandoffQueue_(workanaHandoffQueue);
+  }
+
+  if (executionMailbox === CONFIG.WORKANA_MAILBOX) {
+    summary.pendingWorkanaHandoffs = workanaHandoffQueue.filter(function(item) {
+      return item.status !== 'sent' && item.status !== 'dismissed';
+    });
   }
 
   return summary;
@@ -561,7 +586,7 @@ function buildAlertRecord_(email, classification, firstPass, source) {
   };
 }
 
-function createNotificationAlert_(email, classification, firstPass) {
+function createNotificationAlert_(email, classification, firstPass, workanaHandoff) {
   return {
     dryRun: false,
     messageId: email.id,
@@ -570,8 +595,91 @@ function createNotificationAlert_(email, classification, firstPass) {
     date: email.date,
     permalink: email.permalink,
     classification: classification,
-    workana: firstPass.workana
+    workana: firstPass.workana,
+    workanaHandoff: workanaHandoff || null
   };
+}
+
+function buildWorkanaMailHandoff_(email, classification, firstPass) {
+  const workana = firstPass.workana || {};
+  const normalizedMessageId = String(email.id || '').replace(/[^a-z0-9]/gi, '').toUpperCase();
+  const suffix = (normalizedMessageId || 'UNKNOWN').slice(-8);
+  return {
+    id: 'WK-' + suffix,
+    gmailMessageId: String(email.id || ''),
+    gmailPermalink: String(email.permalink || ''),
+    eventType: workana.eventType || 'new_project',
+    sender: String(email.from || ''),
+    subject: String(email.subject || ''),
+    projectUrls: Array.isArray(workana.safeProjectUrls) ? workana.safeProjectUrls.slice() : [],
+    summary: String(classification.reason || ''),
+    suggestedAction: String(classification.suggested_action || ''),
+    draftReply: String(classification.draft_reply || ''),
+    fitScore: Number(classification.fit_score || 0),
+    confidence: Number(classification.confidence || 0),
+    urgency: normalizeUrgency_(classification.urgency),
+    operatorMode: workana.operatorMode || 'prospecting',
+    authenticity: workana.authenticity || 'suspicious',
+    status: 'pending_local_validation',
+    detectedAt: Utilities.formatDate(email.date, CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss')
+  };
+}
+
+function upsertWorkanaHandoffQueue_(queue, handoff, maxItems) {
+  const items = Array.isArray(queue) ? queue.slice() : [];
+  const next = handoff || {};
+  const index = items.findIndex(function(item) { return item.id === next.id; });
+  if (index >= 0) {
+    const previous = items[index];
+    const preservedStatus = previous.status && previous.status !== 'pending_local_validation'
+      ? previous.status
+      : next.status;
+    items[index] = Object.assign({}, previous, next, { status: preservedStatus });
+  } else {
+    items.push(Object.assign({}, next));
+  }
+  const limit = Math.max(1, Number(maxItems || CONFIG.MAX_WORKANA_HANDOFFS));
+  return items.slice(-limit);
+}
+
+function loadWorkanaHandoffQueue_() {
+  const props = PropertiesService.getScriptProperties();
+  const ids = (props.getProperty(PROP.WORKANA_HANDOFF_INDEX) || '').split('\n').filter(Boolean);
+  return ids.map(function(id) {
+    const raw = props.getProperty(PROP.WORKANA_HANDOFF_PREFIX + id);
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (err) { return null; }
+  }).filter(Boolean);
+}
+
+function saveWorkanaHandoffQueue_(queue) {
+  const props = PropertiesService.getScriptProperties();
+  const previousIds = (props.getProperty(PROP.WORKANA_HANDOFF_INDEX) || '').split('\n').filter(Boolean);
+  const items = (Array.isArray(queue) ? queue : []).slice(-CONFIG.MAX_WORKANA_HANDOFFS);
+  const ids = items.map(function(item) { return item.id; });
+
+  items.forEach(function(item) {
+    props.setProperty(PROP.WORKANA_HANDOFF_PREFIX + item.id, JSON.stringify(item));
+  });
+  previousIds.forEach(function(id) {
+    if (ids.indexOf(id) === -1) props.deleteProperty(PROP.WORKANA_HANDOFF_PREFIX + id);
+  });
+  props.setProperty(PROP.WORKANA_HANDOFF_INDEX, ids.join('\n'));
+}
+
+function clearWorkanaHandoffQueue_() {
+  const props = PropertiesService.getScriptProperties();
+  const ids = (props.getProperty(PROP.WORKANA_HANDOFF_INDEX) || '').split('\n').filter(Boolean);
+  ids.forEach(function(id) { props.deleteProperty(PROP.WORKANA_HANDOFF_PREFIX + id); });
+  props.deleteProperty(PROP.WORKANA_HANDOFF_INDEX);
+}
+
+function listPendingWorkanaHandoffs() {
+  const pending = loadWorkanaHandoffQueue_().filter(function(item) {
+    return item.status !== 'sent' && item.status !== 'dismissed';
+  });
+  Logger.log(JSON.stringify({ pendingWorkanaHandoffs: pending }, null, 2));
+  return pending;
 }
 
 function classifyWorkanaEmail_(email) {
@@ -755,8 +863,11 @@ function buildWhatsAppMessage_(alert) {
     lines.push('*Encaje:* ' + String(c.fit_score) + '/10');
   }
   if (workana && workana.isWorkana) {
+    const handoffId = alert.workanaHandoff && alert.workanaHandoff.id;
+    if (handoffId) lines.push('*ID:* ' + handoffId);
     lines.push('*Workana:* ' + workana.eventType + ' · ' + workana.authenticity);
     lines.push('*Validacion local requerida:* si');
+    if (handoffId) lines.push('*Siguiente paso:* Revisar ' + handoffId);
   }
 
   lines.push('', '*Analisis:* ' + (c.reason || 'Sin motivo informado.'));
@@ -765,7 +876,7 @@ function buildWhatsAppMessage_(alert) {
     lines.push('', '*Borrador para revisar:*', c.draft_reply);
   }
   if (alert.permalink) lines.push('', 'Gmail: ' + alert.permalink);
-  lines.push('', '🔒 No se envio ninguna respuesta ni postulacion.');
+  lines.push('', '🔒 No se envio ninguna respuesta ni postulacion. Revisar no autoriza el envio.');
   return trimText_(lines.join('\n'), 3900);
 }
 

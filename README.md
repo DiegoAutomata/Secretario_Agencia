@@ -59,6 +59,9 @@ El proyecto se ejecuta con tres cuentas y tres triggers instalables. `diegolezan
 - Un proyecto ordinario de Workana debe alcanzar encaje 6/10; se conservan los puntajes de 6 a 10. Invitaciones y respuestas directas pueden alertar aun con economia pendiente.
 - Groq devuelve JSON con decision, categoria, confianza, urgencia, motivo y accion sugerida.
 - El aviso de WhatsApp incluye analisis, accion sugerida y un borrador preliminar para revisar.
+- Cada oportunidad Workana genera un handoff persistente `WK-XXXXXXXX`, visible en los registros como `workanaHandoffs` y `pendingWorkanaHandoffs`.
+- El grupo recibe el comando corto `Revisar WK-XXXXXXXX`. Ese comando identifica el proyecto, pero no autoriza una postulacion.
+- `listPendingWorkanaHandoffs` muestra la cola pendiente sin volver a procesar Gmail ni enviar mensajes.
 - El sistema nunca responde correos ni envia postulaciones. La validacion y cualquier envio en Workana requieren aprobacion exacta.
 - Si Groq falla, los correos con senales fuertes igual generan alerta fallback.
 - No responde, archiva, borra ni etiqueta correos.
