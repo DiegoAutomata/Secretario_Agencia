@@ -49,6 +49,21 @@ test('Workana Academy se clasifica como administrativo y nunca como oportunidad'
   assert.equal(result.operatorMode, 'none')
 })
 
+test('un correo de nuevo mensaje de Workana entra como respuesta comercial', () => {
+  const classifyWorkanaEmail = loadFunction('classifyWorkanaEmail_')
+  const result = classifyWorkanaEmail({
+    id: 'gmail-client-response',
+    from: 'Equipo Workana <hola@workana.com>',
+    subject: '¡Tienes un nuevo mensaje de Alex Vinciguerra...!',
+    excerpt: 'Alex escribió sobre el proyecto React y FastAPI.',
+  })
+
+  assert.equal(result.isWorkana, true)
+  assert.equal(result.eventType, 'client_response')
+  assert.equal(result.operatorMode, 'commercial_conversation')
+  assert.equal(result.requiresLocalValidation, true)
+})
+
 test('solo conserva enlaces HTTPS del host Workana y elimina duplicados', () => {
   const extractSafeWorkanaUrls = loadFunction('extractSafeWorkanaUrls_')
   const urls = extractSafeWorkanaUrls([

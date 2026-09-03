@@ -717,7 +717,7 @@ function classifyWorkanaEmail_(email) {
   if (/invitacion|invitation|te invito|invited you/.test(text)) {
     eventType = 'direct_invitation';
     operatorMode = 'commercial_conversation';
-  } else if (/respondio|respuesta|replied|mensaje nuevo|new message/.test(text)) {
+  } else if (/respondio|respuesta|replied|mensaje nuevo|nuevo mensaje|new message/.test(text)) {
     eventType = 'client_response';
     operatorMode = 'commercial_conversation';
   } else if (/resumen|digest|proyectos para ti|projects for you/.test(text)) {
