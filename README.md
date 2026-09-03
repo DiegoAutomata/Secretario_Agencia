@@ -4,6 +4,15 @@ Monitor cloud 24/7 para detectar oportunidades comerciales en Gmail, aplicar los
 
 Esta version esta ajustada para Diego Lezana y Lezrai: sistemas digitales para agencias que escalan, agentes de IA, automatizaciones, integraciones, plataformas premium, portales de cliente, onboarding automatizado, y oportunidades laborales/recruiting reales que requieran respuesta.
 
+## Estado operativo verificado (2026-09-03)
+
+- Los tres triggers horarios estan instalados y ejecutan bajo `diegolezana1@gmail.com`, `diegolezana7@gmail.com` y `diegofreelance21@gmail.com`. Sus minutos actuales son aproximadamente `:51`, `:15` y `:29`, respectivamente; cada cuenta corre una vez por hora y Google puede introducir un pequeno desfase.
+- La deteccion Gmail, la clasificacion, la cola persistente y el aviso al grupo `Lezrai | Radar de oportunidades` corren en Google Apps Script y continuan con la computadora apagada.
+- Workana se procesa exclusivamente desde `diegofreelance21@gmail.com`. Los proyectos ordinarios pasan con encaje `6/10` o mayor; invitaciones y respuestas de clientes se priorizan por separado.
+- Los asuntos `nuevo mensaje`, `mensaje nuevo`, `respondio`, `respuesta`, `replied` y `new message` se clasifican como respuesta comercial, incluso cuando ya existe una propuesta.
+- La validacion dentro de Workana, la redaccion final y la verificacion de una accion necesitan una sesion local autenticada. No funcionan con la computadora apagada.
+- No existe scraping continuo de listados ni envio ciego de postulaciones. Toda respuesta o postulacion en Workana requiere aprobacion exacta del ID `WK-XXXXXXXX`, seguida de revalidacion y comprobacion en la bandeja.
+
 ## Archivos
 
 - `Code.gs`: codigo principal para Google Apps Script.
